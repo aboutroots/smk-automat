@@ -1,0 +1,6 @@
+config.json
+arkusze
+uzyte_arkusze
+.idea/*
+.~lock*
+to_be_refactored/*
