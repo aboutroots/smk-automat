@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from typing import Optional, TypedDict
 
@@ -6,9 +7,7 @@ import pandas as pd
 from dpath.util import get as dpath_get
 from pandas import DataFrame
 from selenium import webdriver
-from selenium.common.exceptions import (
-    WebDriverException,
-)
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.common.by import By
@@ -86,6 +85,7 @@ class SMKAutomation:
 
     LOGIN_URL = "https://smk.ezdrowie.gov.pl/login.jsp?locale=pl"
     DATA_DIR = "./arkusze"
+    MAX_VISIBLE_ROWS_IN_TABLE = 100
 
     def __init__(self):
         with open("./xpaths.json") as xpaths_data:
@@ -99,7 +99,9 @@ class SMKAutomation:
     def run(self):
         self.driver.get(self.LOGIN_URL)
         table = load_data_table(self.DATA_DIR)
-        print(f'\nLoaded procedures: \n{table.head(10)}')
+        print(
+            f"\nLoaded procedures (total: {table.shape[0]}): \n{table.head(10)}\n..."
+        )
 
         self._login(
             username=self.config["username"], password=self.config["password"]
@@ -111,6 +113,7 @@ class SMKAutomation:
                 "Press [Enter] to start filling the table:"
             )
         )
+        # self._expand_procedures_table() # TODO: expand procedures table
         try:
             self._fill_table(
                 table,
@@ -137,6 +140,14 @@ class SMKAutomation:
             ChromeDriverManager().install(), options=options
         )
 
+    def _get_xpath(
+        self, xpath_key: str, xpath_value_kwargs: Optional[dict] = None
+    ) -> str:
+        xpath_value = dpath_get(self.xpaths, xpath_key)
+        if xpath_value_kwargs:
+            xpath_value = xpath_value.format(**xpath_value_kwargs)
+        return xpath_value
+
     def _get_element(
         self,
         xpath_key: str,
@@ -145,9 +156,7 @@ class SMKAutomation:
     ):
         """Returns element by xpath json key"""
         method = self.wait if not wait_long else self.wait_long
-        xpath_value = dpath_get(self.xpaths, xpath_key)
-        if xpath_value_kwargs:
-            xpath_value = xpath_value.format(**xpath_value_kwargs)
+        xpath_value = self._get_xpath(xpath_key, xpath_value_kwargs)
         return method.until(EC.element_to_be_clickable((By.XPATH, xpath_value)))
 
     def _login(self, username, password):
@@ -168,6 +177,22 @@ class SMKAutomation:
         self._get_element("go_to_primary_table/btn_index_card").click()
         self._get_element("go_to_primary_table/btn_module_expand").click()
 
+    def _expand_procedures_table(self):
+        table_inner = self._get_element("procedures/table_inner")
+        table_outer = self._get_element("procedures/table_outer")
+        for t in [table_inner, table_outer]:
+            current_styles = self.driver.execute_script(
+                "arguments[0].getAttribute('style')", t
+            )
+            new_styles = " height: 3000px; "
+            if current_styles:
+                new_styles = current_styles + new_styles
+            self.driver.execute_script(
+                "arguments[0].setAttribute('style', arguments[1])",
+                t,
+                new_styles,
+            )
+
     def _fill_table(
         self,
         table: DataFrame,
@@ -178,30 +203,51 @@ class SMKAutomation:
         spec_name: str,
     ):
         """Fills the procedure table with data from the excel files"""
+        rows_count = table.shape[0]
         print(f"Adding new empty table rows:")
-        for i in range(table.shape[0]):
-            self._get_element("procedures/add_new_btn").click()
+        for _ in tqdm(range(rows_count)):
+            self._get_element("procedures/add_new_btn_rtg").click() # TODO: dynamic button xpath
 
         print(f"Filling table rows:")
-        for i in tqdm(range(table.shape[0])):
-            row_data = RowData(
-                row_index=i + 1,
-                date=table.iat[i, 4],
-                year=year,
-                code=str(int(code) - 1),
-                full_name=doctor_name,
-                spec_place=spec_place,
-                spec_name=spec_name,
-                initials=table.iat[i, 5],
-                gender=table.iat[i, 2],
-                assistant=table.iat[i, 6],
-                proc_name=table.iat[i, 3],
+        # Process table rows in groups to allow clicking on "next page" in between
+        # groups
+        batch_n = math.ceil(rows_count / self.MAX_VISIBLE_ROWS_IN_TABLE)
+        for batch_idx in range(batch_n):
+            print(
+                f"Starting filling rows on page {batch_idx + 1}/{batch_n}."
             )
-            try:
-                self._fill_row(row_data)
-            except Exception as e:
-                print(f"Error occured for row: {row_data}")
-                raise e
+            if batch_idx != 0:
+                input(
+                    "Press [Enter] to continue. You may need to switch to next page in the"
+                    " table first"
+                )
+            start_idx = batch_idx * self.MAX_VISIBLE_ROWS_IN_TABLE
+            end_idx = (
+                batch_idx * self.MAX_VISIBLE_ROWS_IN_TABLE
+                + self.MAX_VISIBLE_ROWS_IN_TABLE
+            )
+            if end_idx > rows_count:
+                end_idx = rows_count
+            for i in tqdm(range(start_idx, end_idx)):
+                row_index = i + 1 - batch_idx * self.MAX_VISIBLE_ROWS_IN_TABLE
+                row_data = RowData(
+                    row_index=row_index,
+                    date=table.iat[i, 4],
+                    year=year,
+                    code=str(int(code) - 1),
+                    full_name=doctor_name,
+                    spec_place=spec_place,
+                    spec_name=spec_name,
+                    initials=table.iat[i, 5],
+                    gender=table.iat[i, 2],
+                    assistant=table.iat[i, 6],
+                    proc_name=table.iat[i, 3],
+                )
+                try:
+                    self._fill_row(row_data)
+                except Exception as e:
+                    print(f"Error occured for row {i}: {row_data}")
+                    raise e
 
     def _fill_row(self, row_data: RowData):
         """Fills the single procedure table row with provided data"""
