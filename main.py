@@ -28,12 +28,14 @@ class RowData(TypedDict):
     spec_name: str
     initials: str
     gender: str
-    assistant: str
+    doctor_name: str
     proc_name: str
 
 
-def load_data_table(dir_path) -> DataFrame:
+def load_data_table(dir_path: str, with_assist: bool) -> DataFrame:
     table_headers = ["Nazwisko pacjenta", "Imię pacjenta", "Usługa", "Data"]
+    if with_assist:
+        table_headers.append("Lekarz opisujący")
 
     data_files = os.listdir(dir_path)
     df = pd.DataFrame()
@@ -55,9 +57,15 @@ def load_data_table(dir_path) -> DataFrame:
         df = df.append(new_df, ignore_index=True)
         df = df.astype(str)
         df = df[table_headers]
-        df.insert(2, "Plec", "0")
-        df.insert(5, "Inicjały", "0")
-        df.insert(6, "Asysta", "")  # TODO: support for asysta
+        if with_assist:
+            column_to_move = df.pop("Lekarz opisujący")
+            df.insert(2, "Plec", "0")
+            df.insert(5, "Inicjały", "0")
+            df.insert(6, "Lekarz", column_to_move)
+        else:
+            df.insert(2, "Plec", "0")
+            df.insert(5, "Inicjały", "0")
+            df.insert(6, "Lekarz", "")
 
     for i in range(df.shape[0]):
         # convert date
@@ -98,7 +106,8 @@ class SMKAutomation:
 
     def run(self):
         self.driver.get(self.LOGIN_URL)
-        table = load_data_table(self.DATA_DIR)
+        with_assist = str(input('With assist? [Enter 1 or 0]:')) == '1'
+        table = load_data_table(self.DATA_DIR, with_assist=with_assist)
         print(
             f"\nLoaded procedures (total: {table.shape[0]}): \n{table.head(10)}\n..."
         )
@@ -206,7 +215,7 @@ class SMKAutomation:
         rows_count = table.shape[0]
         print(f"Adding new empty table rows:")
         for _ in tqdm(range(rows_count)):
-            self._get_element("procedures/add_new_btn_rtg").click() # TODO: dynamic button xpath
+            self._get_element("procedures/add_new_btn_tk").click() # TODO: dynamic button xpath
 
         print(f"Filling table rows:")
         # Process table rows in groups to allow clicking on "next page" in between
@@ -240,7 +249,7 @@ class SMKAutomation:
                     spec_name=spec_name,
                     initials=table.iat[i, 5],
                     gender=table.iat[i, 2],
-                    assistant=table.iat[i, 6],
+                    doctor_name=table.iat[i, 6],
                     proc_name=table.iat[i, 3],
                 )
                 try:
@@ -251,6 +260,9 @@ class SMKAutomation:
 
     def _fill_row(self, row_data: RowData):
         """Fills the single procedure table row with provided data"""
+        doctor_name = row_data['doctor_name'] if row_data['doctor_name'] else row_data['full_name']
+        assistant_name = row_data['full_name'] if row_data['doctor_name'] else ''
+
         get = lambda key: self._get_element(
             key, xpath_value_kwargs={"idx": row_data["row_index"]}
         )
@@ -259,7 +271,7 @@ class SMKAutomation:
             row_data["year"]
         )
         Select(get("procedures/kod_zabiegu")).select_by_index(row_data["code"])
-        get("procedures/nazwisko").send_keys(row_data["full_name"])
+        get("procedures/nazwisko").send_keys(doctor_name)
         Select(get("procedures/miejsce")).select_by_index(
             row_data["spec_place"]
         )
@@ -268,7 +280,9 @@ class SMKAutomation:
         )
         get("procedures/inicjaly").send_keys(row_data["initials"])
         Select(get("procedures/plec")).select_by_value(row_data["gender"])
-        get("procedures/asysta").send_keys(row_data["assistant"])
+
+        get("procedures/asysta").send_keys(assistant_name)
+
         get("procedures/nazwa_procedury").send_keys(row_data["proc_name"])
 
 
