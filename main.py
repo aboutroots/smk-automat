@@ -242,8 +242,9 @@ class SMKAutomation:
                 code = 1 if assistant_name else 0  # assistant or operator
 
                 procedure_date = table.iat[i, 4]
-                procedure_date_year = parse_procedure_date(procedure_date).year
-                year = procedure_date_year - starting_year.year + 1
+                procedure_date_obj = parse_procedure_date(procedure_date)
+                year_delta = procedure_date_obj - starting_year
+                year = year_delta.days // 365 + 1
                 row_data = RowData(
                     row_index=row_index,
                     date=procedure_date,
