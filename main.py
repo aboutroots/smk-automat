@@ -117,7 +117,7 @@ class SMKAutomation:
 
     def run(self):
         self.driver.get(self.LOGIN_URL)
-        with_assist = str(input("With assist? [Enter 1 or 0]:")) == "1"
+        with_assist = str(input("With assist? Write 1 or 0 and press [Enter]:")) == "1"
         table = load_data_table(self.DATA_DIR, with_assist=with_assist)
         print(
             f"\nLoaded procedures (total: {table.shape[0]}): \n{table.head(10)}\n..."
