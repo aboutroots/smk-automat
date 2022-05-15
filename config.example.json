@@ -1,8 +1,7 @@
 {
     "username": "test@user.smk.pl",
     "password": "super-secret-pass",
-    "rok_szkolenia": "1",
-    "kod_zabiegu_wartosc_na_liscie": "1",
+    "data_zaczecia_rezydentury": "11.02.2019",
     "imie_nazwisko_lekarza": "Andrzej Superdoktorski",
     "miejsce_szkolenia_pozycja_na_liscie": "2",
     "nazwa_szkolenia_pozycja_na_liscie": "11"

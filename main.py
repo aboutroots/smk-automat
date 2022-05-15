@@ -1,6 +1,7 @@
 import json
 import math
 import os
+from datetime import date
 from typing import Optional, TypedDict
 
 import pandas as pd
@@ -23,12 +24,12 @@ class RowData(TypedDict):
     date: str
     year: str
     code: str
-    full_name: str
     spec_place: str
     spec_name: str
     initials: str
     gender: str
     doctor_name: str
+    assistant_name: str
     proc_name: str
 
 
@@ -85,6 +86,16 @@ def load_data_table(dir_path: str, with_assist: bool) -> DataFrame:
     return df
 
 
+def parse_starting_year(input_str: str) -> date:
+    day, month, year = [int(x) for x in input_str.split(".")]
+    return date(year, month, day)
+
+
+def parse_procedure_date(input_str: str) -> date:
+    year, month, day = [int(x) for x in input_str.split("-")]
+    return date(year, month, day)
+
+
 class SMKAutomation:
     """Web automation using Selenium for filling procedure tables in SMK.
 
@@ -106,7 +117,7 @@ class SMKAutomation:
 
     def run(self):
         self.driver.get(self.LOGIN_URL)
-        with_assist = str(input('With assist? [Enter 1 or 0]:')) == '1'
+        with_assist = str(input("With assist? [Enter 1 or 0]:")) == "1"
         table = load_data_table(self.DATA_DIR, with_assist=with_assist)
         print(
             f"\nLoaded procedures (total: {table.shape[0]}): \n{table.head(10)}\n..."
@@ -116,19 +127,13 @@ class SMKAutomation:
             username=self.config["username"], password=self.config["password"]
         )
         self._go_to_procedure_tables()
-        input(
-            (
-                "Make sure the proper procedure table is open!\n"
-                "Press [Enter] to start filling the table:"
-            )
-        )
-        # self._expand_procedures_table() # TODO: expand procedures table
         try:
             self._fill_table(
                 table,
-                year=self.config["rok_szkolenia"],
-                code=self.config["kod_zabiegu_wartosc_na_liscie"],
-                doctor_name=self.config["imie_nazwisko_lekarza"],
+                your_name=self.config["imie_nazwisko_lekarza"],
+                starting_year=parse_starting_year(
+                    self.config["data_zaczecia_rezydentury"]
+                ),
                 spec_place=self.config["miejsce_szkolenia_pozycja_na_liscie"],
                 spec_name=self.config["nazwa_szkolenia_pozycja_na_liscie"],
             )
@@ -162,10 +167,14 @@ class SMKAutomation:
         xpath_key: str,
         wait_long: bool = False,
         xpath_value_kwargs: Optional[dict] = None,
+        direct_xpath: bool = False,
     ):
         """Returns element by xpath json key"""
         method = self.wait if not wait_long else self.wait_long
-        xpath_value = self._get_xpath(xpath_key, xpath_value_kwargs)
+        if direct_xpath:
+            xpath_value = xpath_key
+        else:
+            xpath_value = self._get_xpath(xpath_key, xpath_value_kwargs)
         return method.until(EC.element_to_be_clickable((By.XPATH, xpath_value)))
 
     def _login(self, username, password):
@@ -186,45 +195,32 @@ class SMKAutomation:
         self._get_element("go_to_primary_table/btn_index_card").click()
         self._get_element("go_to_primary_table/btn_module_expand").click()
 
-    def _expand_procedures_table(self):
-        table_inner = self._get_element("procedures/table_inner")
-        table_outer = self._get_element("procedures/table_outer")
-        for t in [table_inner, table_outer]:
-            current_styles = self.driver.execute_script(
-                "arguments[0].getAttribute('style')", t
-            )
-            new_styles = " height: 3000px; "
-            if current_styles:
-                new_styles = current_styles + new_styles
-            self.driver.execute_script(
-                "arguments[0].setAttribute('style', arguments[1])",
-                t,
-                new_styles,
-            )
-
     def _fill_table(
         self,
         table: DataFrame,
-        year: str,
-        code: str,
-        doctor_name: str,
+        starting_year: date,
+        your_name: str,
         spec_place: str,
         spec_name: str,
     ):
         """Fills the procedure table with data from the excel files"""
+        button_xpath = input(
+            (
+                "Make sure the proper procedure table is open!\n"
+                'Paste "Dodaj" button XPATH and click [Enter]:'
+            )
+        )
         rows_count = table.shape[0]
         print(f"Adding new empty table rows:")
         for _ in tqdm(range(rows_count)):
-            self._get_element("procedures/add_new_btn_tk").click() # TODO: dynamic button xpath
+            self._get_element(button_xpath, direct_xpath=True).click()
 
         print(f"Filling table rows:")
         # Process table rows in groups to allow clicking on "next page" in between
         # groups
         batch_n = math.ceil(rows_count / self.MAX_VISIBLE_ROWS_IN_TABLE)
         for batch_idx in range(batch_n):
-            print(
-                f"Starting filling rows on page {batch_idx + 1}/{batch_n}."
-            )
+            print(f"Starting filling rows on page {batch_idx + 1}/{batch_n}.")
             if batch_idx != 0:
                 input(
                     "Press [Enter] to continue. You may need to switch to next page in the"
@@ -239,18 +235,27 @@ class SMKAutomation:
                 end_idx = rows_count
             for i in tqdm(range(start_idx, end_idx)):
                 row_index = i + 1 - batch_idx * self.MAX_VISIBLE_ROWS_IN_TABLE
+
+                doctor = table.iat[i, 6]
+                doctor_name = doctor if doctor else your_name
+                assistant_name = your_name if doctor else ""
+                code = 1 if assistant_name else 0  # assistant or operator
+
+                procedure_date = table.iat[i, 4]
+                procedure_date_year = parse_procedure_date(procedure_date).year
+                year = procedure_date_year - starting_year.year + 1
                 row_data = RowData(
                     row_index=row_index,
-                    date=table.iat[i, 4],
-                    year=year,
-                    code=str(int(code) - 1),
-                    full_name=doctor_name,
+                    date=procedure_date,
+                    year=str(year),
+                    code=str(code),
                     spec_place=spec_place,
                     spec_name=spec_name,
                     initials=table.iat[i, 5],
                     gender=table.iat[i, 2],
-                    doctor_name=table.iat[i, 6],
                     proc_name=table.iat[i, 3],
+                    doctor_name=doctor_name,
+                    assistant_name=assistant_name,
                 )
                 try:
                     self._fill_row(row_data)
@@ -260,8 +265,6 @@ class SMKAutomation:
 
     def _fill_row(self, row_data: RowData):
         """Fills the single procedure table row with provided data"""
-        doctor_name = row_data['doctor_name'] if row_data['doctor_name'] else row_data['full_name']
-        assistant_name = row_data['full_name'] if row_data['doctor_name'] else ''
 
         get = lambda key: self._get_element(
             key, xpath_value_kwargs={"idx": row_data["row_index"]}
@@ -271,7 +274,7 @@ class SMKAutomation:
             row_data["year"]
         )
         Select(get("procedures/kod_zabiegu")).select_by_index(row_data["code"])
-        get("procedures/nazwisko").send_keys(doctor_name)
+        get("procedures/nazwisko").send_keys(row_data["doctor_name"])
         Select(get("procedures/miejsce")).select_by_index(
             row_data["spec_place"]
         )
@@ -281,7 +284,7 @@ class SMKAutomation:
         get("procedures/inicjaly").send_keys(row_data["initials"])
         Select(get("procedures/plec")).select_by_value(row_data["gender"])
 
-        get("procedures/asysta").send_keys(assistant_name)
+        get("procedures/asysta").send_keys(row_data["assistant_name"])
 
         get("procedures/nazwa_procedury").send_keys(row_data["proc_name"])
 
