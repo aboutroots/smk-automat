@@ -117,7 +117,9 @@ class SMKAutomation:
 
     def run(self):
         self.driver.get(self.LOGIN_URL)
-        with_assist = str(input("With assist? Write 1 or 0 and press [Enter]:")) == "1"
+        with_assist = (
+            str(input("With assist? Write 1 or 0 and press [Enter]:")) == "1"
+        )
         table = load_data_table(self.DATA_DIR, with_assist=with_assist)
         print(
             f"\nLoaded procedures (total: {table.shape[0]}): \n{table.head(10)}\n..."
@@ -235,34 +237,54 @@ class SMKAutomation:
                 end_idx = rows_count
             for i in tqdm(range(start_idx, end_idx)):
                 row_index = i + 1 - batch_idx * self.MAX_VISIBLE_ROWS_IN_TABLE
-
-                doctor = table.iat[i, 6]
-                doctor_name = doctor if doctor else your_name
-                assistant_name = your_name if doctor else ""
-                code = 1 if assistant_name else 0  # assistant or operator
-
-                procedure_date = table.iat[i, 4]
-                procedure_date_obj = parse_procedure_date(procedure_date)
-                year_delta = procedure_date_obj - starting_year
-                year = year_delta.days // 365 + 1
-                row_data = RowData(
+                row_data = self._get_row_data(
+                    table=table,
+                    current_index=i,
                     row_index=row_index,
-                    date=procedure_date,
-                    year=str(year),
-                    code=str(code),
-                    spec_place=spec_place,
+                    your_name=your_name,
+                    starting_year=starting_year,
                     spec_name=spec_name,
-                    initials=table.iat[i, 5],
-                    gender=table.iat[i, 2],
-                    proc_name=table.iat[i, 3],
-                    doctor_name=doctor_name,
-                    assistant_name=assistant_name,
+                    spec_place=spec_place,
                 )
                 try:
                     self._fill_row(row_data)
                 except Exception as e:
                     print(f"Error occured for row {i}: {row_data}")
                     raise e
+
+    @staticmethod
+    def _get_row_data(
+        table: DataFrame,
+        current_index: int,
+        row_index: int,
+        your_name: str,
+        starting_year: date,
+        spec_place: str,
+        spec_name: str,
+    ) -> RowData:
+        """Parse row information into a final format for filling"""
+        doctor = table.iat[current_index, 6]
+        doctor_name = doctor if doctor else your_name
+        assistant_name = your_name if doctor else ""
+        code = 1 if assistant_name else 0  # assistant or operator
+
+        procedure_date = table.iat[current_index, 4]
+        procedure_date_obj = parse_procedure_date(procedure_date)
+        year_delta = procedure_date_obj - starting_year
+        year = year_delta.days // 365 + 1
+        return RowData(
+            row_index=row_index,
+            date=procedure_date,
+            year=str(year),
+            code=str(code),
+            spec_place=spec_place,
+            spec_name=spec_name,
+            initials=table.iat[current_index, 5],
+            gender=table.iat[current_index, 2],
+            proc_name=table.iat[current_index, 3],
+            doctor_name=doctor_name,
+            assistant_name=assistant_name,
+        )
 
     def _fill_row(self, row_data: RowData):
         """Fills the single procedure table row with provided data"""
